@@ -2,6 +2,10 @@
 
 **galarm**, güne zinde, odaklanmış ve hızlı bir şekilde başlamanızı sağlayan, "atlatılamaz" (un-bypassable) tasarıma sahip modern bir Android bulmaca alarm uygulamasıdır. Klasik alarmların aksine erteleme seçeneği barındırmaz ve alarmı kapatabilmeniz için beyninizi uyandıracak bulmacaları çözmenizi şart koşar.
 
+### 📲 İndir
+Mobil cihazınıza doğrudan kurabilmek için son kararlı sürüm APK dosyasını aşağıdaki bağlantıdan indirebilirsiniz:
+👉 **[galarm.apk İndir](https://github.com/BayNuman/Galarm/releases/download/v1.0.0/galarm.apk)**
+
 ---
 
 ## 🚀 Öne Çıkan Özellikler
