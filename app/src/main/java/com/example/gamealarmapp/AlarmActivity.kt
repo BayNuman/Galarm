@@ -15,6 +15,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -1201,88 +1203,124 @@ fun ColorMatchGameScreen(difficulty: GameDifficulty, onGameSolved: () -> Unit) {
     }
 }
 
-// ---------------------- 6. ZIP GAME SCREEN ----------------------
+// ---------------------- 6. ZIP (FLOW) GAME SCREEN ----------------------
 @Composable
 fun ZipGameScreen(difficulty: GameDifficulty, onGameSolved: () -> Unit) {
     val gridSize = when (difficulty) {
         GameDifficulty.EASY -> 4
-        GameDifficulty.MEDIUM -> 4
+        GameDifficulty.MEDIUM -> 5
         GameDifficulty.HARD -> 5
     }
 
-    val numCheckpoints = when (difficulty) {
-        GameDifficulty.EASY -> 4
+    val numColors = when (difficulty) {
+        GameDifficulty.EASY -> 3
         GameDifficulty.MEDIUM -> 3
         GameDifficulty.HARD -> 4
     }
 
-    var checkpoints by remember { mutableStateOf(mapOf<Pair<Int, Int>, Int>()) }
-    var userPath by remember { mutableStateOf(listOf<Pair<Int, Int>>()) }
+    val flowColors = remember {
+        listOf(
+            Color(0xFFFF2D55), // Neon Red/Pink
+            Color(0xFF4CD964), // Neon Green
+            Color(0xFF007AFF), // Neon Blue
+            Color(0xFFFF9500), // Neon Yellow/Orange
+            Color(0xFF5856D6)  // Neon Purple
+        )
+    }
+
+    var endpoints by remember { mutableStateOf(mapOf<Pair<Int, Int>, Int>()) }
+    var userPaths by remember { mutableStateOf(mapOf<Int, List<Pair<Int, Int>>>()) }
+    var activeColorIndex by remember { mutableStateOf<Int?>(null) }
     var isError by remember { mutableStateOf(false) }
 
     fun generatePuzzle() {
         val rand = Random(System.nanoTime())
-        var generatedPath: List<Pair<Int, Int>>? = null
+        var generatedPaths: List<List<Pair<Int, Int>>>? = null
         var attempts = 0
-        while (generatedPath == null && attempts < 100) {
+        
+        while (generatedPaths == null && attempts < 300) {
             attempts++
             val visited = Array(gridSize) { BooleanArray(gridSize) }
-            val path = mutableListOf<Pair<Int, Int>>()
-            val startRow = rand.nextInt(gridSize)
-            val startCol = rand.nextInt(gridSize)
+            val paths = List(numColors) { mutableListOf<Pair<Int, Int>>() }
             
-            fun dfs(r: Int, c: Int): Boolean {
-                path.add(r to c)
-                visited[r][c] = true
-                if (path.size == gridSize * gridSize) return true
-                
-                val dirs = listOf(-1 to 0, 1 to 0, 0 to -1, 0 to 1).shuffled(rand)
-                for ((dr, dc) in dirs) {
-                    val nr = r + dr
-                    val nc = c + dc
-                    if (nr in 0 until gridSize && nc in 0 until gridSize && !visited[nr][nc]) {
-                        if (dfs(nr, nc)) return true
-                    }
+            // Place initial starting dots
+            var failedToPlace = false
+            for (i in 0 until numColors) {
+                var r = rand.nextInt(gridSize)
+                var c = rand.nextInt(gridSize)
+                var retries = 0
+                while (visited[r][c] && retries < 100) {
+                    r = rand.nextInt(gridSize)
+                    c = rand.nextInt(gridSize)
+                    retries++
                 }
-                path.removeAt(path.size - 1)
-                visited[r][c] = false
-                return false
+                if (retries >= 100) {
+                    failedToPlace = true
+                    break
+                }
+                visited[r][c] = true
+                paths[i].add(r to c)
             }
             
-            if (dfs(startRow, startCol)) {
-                generatedPath = path
+            if (failedToPlace) continue
+            
+            // Growth loop: Grow paths randomly to fill the grid
+            var progress = true
+            while (progress) {
+                progress = false
+                val indices = (0 until numColors).shuffled(rand)
+                for (idx in indices) {
+                    val path = paths[idx]
+                    if (path.isEmpty()) continue
+                    
+                    val growFromEnd = rand.nextBoolean()
+                    val cell = if (growFromEnd) path.last() else path.first()
+                    
+                    val neighbors = mutableListOf<Pair<Int, Int>>()
+                    for ((dr, dc) in listOf(-1 to 0, 1 to 0, 0 to -1, 0 to 1)) {
+                        val nr = cell.first + dr
+                        val nc = cell.second + dc
+                        if (nr in 0 until gridSize && nc in 0 until gridSize && !visited[nr][nc]) {
+                            neighbors.add(nr to nc)
+                        }
+                    }
+                    
+                    if (neighbors.isNotEmpty()) {
+                        val nextCell = neighbors.random(rand)
+                        visited[nextCell.first][nextCell.second] = true
+                        if (growFromEnd) {
+                            path.add(nextCell)
+                        } else {
+                            path.add(0, nextCell)
+                        }
+                        progress = true
+                    }
+                }
+            }
+            
+            if (paths.all { it.size >= 2 }) {
+                generatedPaths = paths
             }
         }
 
-        val finalPath = generatedPath ?: run {
-            val fallback = mutableListOf<Pair<Int, Int>>()
-            for (r in 0 until gridSize) {
-                if (r % 2 == 0) {
-                    for (c in 0 until gridSize) fallback.add(r to c)
-                } else {
-                    for (c in gridSize - 1 downTo 0) fallback.add(r to c)
-                }
+        val finalPaths = generatedPaths ?: run {
+            val fallback = mutableListOf<List<Pair<Int, Int>>>()
+            for (i in 0 until numColors) {
+                val row = i * (gridSize / numColors)
+                fallback.add(listOf(row to 0, row to gridSize - 1))
             }
             fallback
         }
 
-        val pathIndices = when (numCheckpoints) {
-            3 -> listOf(0, 7, 15)
-            4 -> {
-                if (gridSize == 4) listOf(0, 5, 10, 15)
-                else listOf(0, 8, 16, 24)
-            }
-            else -> listOf(0, gridSize * gridSize - 1)
-        }
-
         val map = mutableMapOf<Pair<Int, Int>, Int>()
-        pathIndices.forEachIndexed { i, pathIdx ->
-            val cell = finalPath[pathIdx]
-            map[cell] = i + 1
+        finalPaths.forEachIndexed { i, path ->
+            map[path.first()] = i
+            map[path.last()] = i
         }
 
-        checkpoints = map
-        userPath = emptyList()
+        endpoints = map
+        userPaths = emptyMap()
+        activeColorIndex = null
         isError = false
     }
 
@@ -1290,68 +1328,124 @@ fun ZipGameScreen(difficulty: GameDifficulty, onGameSolved: () -> Unit) {
         generatePuzzle()
     }
 
-    LaunchedEffect(isError) {
-        if (isError) {
-            delay(500)
-            isError = false
+    fun checkWinCondition() {
+        val allConnected = (0 until numColors).all { idx ->
+            val path = userPaths[idx] ?: return@all false
+            if (path.size < 2) return@all false
+            
+            val first = path.first()
+            val last = path.last()
+            
+            val isEndpoint1 = endpoints[first] == idx
+            val isEndpoint2 = endpoints[last] == idx
+            isEndpoint1 && isEndpoint2 && (first != last)
+        }
+
+        if (allConnected) {
+            val totalCoveredCells = userPaths.values.sumOf { it.size }
+            if (totalCoveredCells == gridSize * gridSize) {
+                onGameSolved()
+            }
         }
     }
 
-    val totalCells = gridSize * gridSize
-
-    fun handleCellTap(r: Int, c: Int) {
-        val tappedCoord = r to c
-        if (userPath.isEmpty()) {
-            if (checkpoints[tappedCoord] == 1) {
-                userPath = listOf(tappedCoord)
+    fun startDrawing(r: Int, c: Int) {
+        val coord = r to c
+        val colorIdx = endpoints[coord]
+        if (colorIdx != null) {
+            activeColorIndex = colorIdx
+            userPaths = userPaths.toMutableMap().apply {
+                put(colorIdx, listOf(coord))
             }
-        } else if (userPath.contains(tappedCoord)) {
-            val idx = userPath.indexOf(tappedCoord)
-            userPath = userPath.subList(0, idx + 1)
         } else {
-            val last = userPath.last()
-            val isAdjacent = (kotlin.math.abs(last.first - r) == 1 && last.second == c) || 
-                              (last.first == r && kotlin.math.abs(last.second - c) == 1)
-            
-            if (isAdjacent) {
-                val checkpointVal = checkpoints[tappedCoord]
-                if (checkpointVal != null) {
-                    val visitedCheckpointsCount = userPath.count { checkpoints.containsKey(it) }
-                    if (checkpointVal == visitedCheckpointsCount + 1) {
-                        val newPath = userPath + tappedCoord
-                        userPath = newPath
-                        val newVisitedCount = newPath.count { checkpoints.containsKey(it) }
-                        if (newPath.size == totalCells && newVisitedCount == numCheckpoints) {
-                            onGameSolved()
-                        }
-                    } else {
-                        isError = true
-                    }
-                } else {
-                    val newPath = userPath + tappedCoord
-                    userPath = newPath
-                    val newVisitedCount = newPath.count { checkpoints.containsKey(it) }
-                    if (newPath.size == totalCells && newVisitedCount == numCheckpoints) {
-                        onGameSolved()
-                    }
+            val existingColor = userPaths.entries.firstOrNull { it.value.contains(coord) }
+            if (existingColor != null) {
+                val path = existingColor.value
+                val idx = path.indexOf(coord)
+                activeColorIndex = existingColor.key
+                userPaths = userPaths.toMutableMap().apply {
+                    put(existingColor.key, path.subList(0, idx + 1))
                 }
             }
         }
     }
+
+    fun extendDrawing(r: Int, c: Int) {
+        val activeIdx = activeColorIndex ?: return
+        val path = userPaths[activeIdx] ?: return
+        if (path.isEmpty()) return
+        val last = path.last()
+        val target = r to c
+        if (last == target) return
+
+        val isAdjacent = (kotlin.math.abs(last.first - r) == 1 && last.second == c) || 
+                          (last.first == r && kotlin.math.abs(last.second - c) == 1)
+        if (!isAdjacent) return
+
+        if (path.size > 1 && path[path.size - 2] == target) {
+            userPaths = userPaths.toMutableMap().apply {
+                put(activeIdx, path.subList(0, path.size - 1))
+            }
+            return
+        }
+
+        if (path.contains(target)) {
+            val idx = path.indexOf(target)
+            userPaths = userPaths.toMutableMap().apply {
+                put(activeIdx, path.subList(0, idx + 1))
+            }
+            return
+        }
+
+        val endpointColor = endpoints[target]
+        if (endpointColor != null && endpointColor != activeIdx) {
+            return
+        }
+
+        if (endpointColor == activeIdx) {
+            userPaths = userPaths.toMutableMap().apply {
+                put(activeIdx, path + target)
+            }
+            activeColorIndex = null
+            checkWinCondition()
+            return
+        }
+
+        val otherColorEntry = userPaths.entries.firstOrNull { it.key != activeIdx && it.value.contains(target) }
+        if (otherColorEntry != null) {
+            val otherIdx = otherColorEntry.key
+            val otherPath = otherColorEntry.value
+            val targetIdx = otherPath.indexOf(target)
+            userPaths = userPaths.toMutableMap().apply {
+                if (targetIdx == 0) {
+                    remove(otherIdx)
+                } else {
+                    put(otherIdx, otherPath.subList(0, targetIdx))
+                }
+            }
+        }
+
+        userPaths = userPaths.toMutableMap().apply {
+            put(activeIdx, path + target)
+        }
+    }
+
+    val totalCells = gridSize * gridSize
+    val totalCovered = userPaths.values.sumOf { it.size }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth()
     ) {
         Text(
-            text = "Zip",
+            text = "Çizgi Bağla",
             fontSize = 24.sp,
             fontWeight = FontWeight.Black,
             color = Color.White
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "${userPath.size} / $totalCells",
+            text = "Doluluk: $totalCovered / $totalCells",
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFFFF2D85)
@@ -1370,14 +1464,42 @@ fun ZipGameScreen(difficulty: GameDifficulty, onGameSolved: () -> Unit) {
                     if (isError) Color.Red else Color.White.copy(alpha = 0.1f),
                     RoundedCornerShape(16.dp)
                 )
+                .pointerInput(gridSize, endpoints, userPaths) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val cellW = size.width / gridSize
+                            val cellH = size.height / gridSize
+                            
+                            var r = (down.position.y / cellH).toInt().coerceIn(0, gridSize - 1)
+                            var c = (down.position.x / cellW).toInt().coerceIn(0, gridSize - 1)
+                            startDrawing(r, c)
+                            
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val anyPressed = event.changes.any { it.pressed }
+                                if (!anyPressed) break
+                                
+                                val change = event.changes.first()
+                                val pos = change.position
+                                r = (pos.y / cellH).toInt().coerceIn(0, gridSize - 1)
+                                c = (pos.x / cellW).toInt().coerceIn(0, gridSize - 1)
+                                extendDrawing(r, c)
+                                change.consume()
+                            }
+                            
+                            activeColorIndex = null
+                            checkWinCondition()
+                        }
+                    }
+                }
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 for (r in 0 until gridSize) {
                     Row(modifier = Modifier.weight(1f)) {
                         for (c in 0 until gridSize) {
                             val coord = r to c
-                            val checkpointVal = checkpoints[coord]
-                            val isPathCell = userPath.contains(coord)
+                            val endpointColorIdx = endpoints[coord]
                             
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -1385,36 +1507,15 @@ fun ZipGameScreen(difficulty: GameDifficulty, onGameSolved: () -> Unit) {
                                     .weight(1f)
                                     .fillMaxHeight()
                                     .border(0.5.dp, Color.White.copy(alpha = 0.05f))
-                                    .clickable { handleCellTap(r, c) }
                             ) {
-                                if (checkpointVal != null) {
+                                if (endpointColorIdx != null) {
+                                    val color = flowColors[endpointColorIdx % flowColors.size]
                                     Box(
-                                        contentAlignment = Alignment.Center,
                                         modifier = Modifier
-                                            .size(40.dp)
+                                            .size(24.dp)
                                             .clip(CircleShape)
-                                            .background(
-                                                if (isPathCell) Color(0xFFFF2D85)
-                                                else Color.White.copy(alpha = 0.08f)
-                                            )
-                                            .border(
-                                                1.5.dp,
-                                                if (isPathCell) Color.White else Color(0xFFFF2D85),
-                                                CircleShape
-                                            )
-                                    ) {
-                                        Text(
-                                            text = checkpointVal.toString(),
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = Color.White
-                                        )
-                                    }
-                                } else if (isPathCell) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(10.dp)
-                                            .background(Color(0xFFFF2D85).copy(alpha = 0.8f), CircleShape)
+                                            .background(color)
+                                            .border(2.dp, Color.White, CircleShape)
                                     )
                                 }
                             }
@@ -1424,34 +1525,35 @@ fun ZipGameScreen(difficulty: GameDifficulty, onGameSolved: () -> Unit) {
             }
 
             Canvas(modifier = Modifier.fillMaxSize()) {
-                if (userPath.size > 1) {
-                    val cellW = this.size.width / gridSize
-                    val cellH = this.size.height / gridSize
-                    val linePath = androidx.compose.ui.graphics.Path()
-                    
-                    val first = userPath[0]
-                    linePath.moveTo(
-                        (first.second + 0.5f) * cellW,
-                        (first.first + 0.5f) * cellH
-                    )
-                    
-                    for (i in 1 until userPath.size) {
-                        val curr = userPath[i]
-                        linePath.lineTo(
-                            (curr.second + 0.5f) * cellW,
-                            (curr.first + 0.5f) * cellH
+                val cellW = this.size.width / gridSize
+                val cellH = this.size.height / gridSize
+                
+                userPaths.forEach { (colorIdx, path) ->
+                    if (path.size > 1) {
+                        val linePath = androidx.compose.ui.graphics.Path()
+                        val first = path[0]
+                        linePath.moveTo(
+                            (first.second + 0.5f) * cellW,
+                            (first.first + 0.5f) * cellH
+                        )
+                        for (i in 1 until path.size) {
+                            val curr = path[i]
+                            linePath.lineTo(
+                                (curr.second + 0.5f) * cellW,
+                                (curr.first + 0.5f) * cellH
+                            )
+                        }
+                        
+                        drawPath(
+                            path = linePath,
+                            color = flowColors[colorIdx % flowColors.size],
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = 12.dp.toPx(),
+                                cap = StrokeCap.Round,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round
+                            )
                         )
                     }
-                    
-                    drawPath(
-                        path = linePath,
-                        color = Color(0xFFFF2D85),
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = 6.dp.toPx(),
-                            cap = StrokeCap.Round,
-                            join = androidx.compose.ui.graphics.StrokeJoin.Round
-                        )
-                    )
                 }
             }
         }
